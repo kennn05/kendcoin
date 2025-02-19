@@ -1,6 +1,6 @@
 apt update -y
 apt install git -y
 apt install python -y 
-pip install request mnemonic ecdsa hashlib cryptography
+pip install requests mnemonic ecdsa hashlib cryptography flask
 bash start ~/kendcoin/start.sh
  
