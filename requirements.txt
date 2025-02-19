@@ -1,0 +1,6 @@
+os
+requests
+ecdsa
+hashlib
+mnemonic
+cryptography
