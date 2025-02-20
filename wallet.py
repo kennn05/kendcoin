@@ -12,7 +12,7 @@ from cryptography.hazmat.backends import default_backend
 import base64
 import time
 os.system('clear')
-SERVER = 'https://laptop-ubuntu.tail6eefa7.ts.net'
+SERVER = 'http://192.168.43.29:5000'
 
 def banner():
     print("""⠀
@@ -31,32 +31,33 @@ def banner():
     ⠀⠀⠀⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋⠀⠀⠀
     ⠀⠀⠀⠀⠀⠙⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠋⠀⠀⠀⠀⠀
     ⠀⠀⠀⠀⠀⠀⠀⠀⠉⠛⠻⠿⢿⣿⣿⣿⣿⡿⠿⠟⠛⠉⠀⠀⠀⠀⠀⠀⠀⠀""")
-    
+
 class Wallet:
     def __init__(self):
         self.private_key = None
         self.address = None
         self.username = ''
+        self.seed_phrase = ''
 
     def generate(self):
         mnemo = Mnemonic("english")
         phrase = mnemo.generate()
-        os.system('clear')
+        self.seed_phrase = phrase
         print(f"\nSAVE THIS SEED: {phrase}\n")
         seed = mnemo.to_seed(phrase)
         self.private_key = SigningKey.from_string(seed[:32], curve=SECP256k1)
         self.address = hashlib.sha256(
             self.private_key.verifying_key.to_string()
         ).hexdigest()
-        self.username = input("write username: ")
+        self.username = input("Username: ")
         self._save_to_file(phrase, self.username)
         return self
 
     def _save_to_file(self, phrase, username):
-        pin = getpass("Choose a 6-digit PIN: ")
+        pin = getpass("\nChoose a 6-digit PIN: ")
         while len(pin) != 6 or not pin.isdigit():
             pin = getpass("PIN must be 6 digits: ")
-        
+
         salt = os.urandom(16)
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
@@ -67,7 +68,7 @@ class Wallet:
         )
         key = base64.urlsafe_b64encode(kdf.derive(pin.encode()))
         fernet = Fernet(key)
-        
+
         key_data = {
             'phrase': phrase,
             'private_key': base64.b64encode(
@@ -76,19 +77,21 @@ class Wallet:
             'username': username
         }
         encrypted = fernet.encrypt(json.dumps(key_data).encode())
-        
-        with open(f"{self.username}.dat", 'wb') as f:
+
+        with open(f"{self.username}.wallet", 'wb') as f:
             f.write(base64.b64encode(salt) + b'\n')
             f.write(encrypted)
         os.system('clear')
-        print(f"Wallet saved to {self.username}.dat")
+        print(f"Wallet saved to {self.username}.wallet")
+        os.system("sleep 3")
+        os.system('clear')
 
     def load(self, path):
         pin = getpass("Enter PIN: ")
         with open(path, 'rb') as f:
             salt_line = f.readline().strip()
             encrypted = f.read()
-        
+
         salt = base64.b64decode(salt_line)
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
@@ -99,14 +102,14 @@ class Wallet:
         )
         key = base64.urlsafe_b64encode(kdf.derive(pin.encode()))
         fernet = Fernet(key)
-        
+
         try:
             decrypted = fernet.decrypt(encrypted)
         except:
             os.system('clear')
             print("Decryption failed. Wrong PIN?")
             raise
-        
+
         key_data = json.loads(decrypted)
         self.private_key = SigningKey.from_pem(
             base64.b64decode(key_data['private_key'])
@@ -115,6 +118,7 @@ class Wallet:
             self.private_key.verifying_key.to_string()
         ).hexdigest()
         self.username = key_data.get('username', '')
+        self.seed_phrase = key_data['phrase']
         return self
 
     def load_from_private_key(self, pem):
@@ -133,12 +137,13 @@ class Wallet:
         mnemo = Mnemonic("english")
         if not mnemo.check(phrase):
             raise ValueError("Invalid seed phrase")
+        self.seed_phrase = phrase
         seed = mnemo.to_seed(phrase)
         self.private_key = SigningKey.from_string(seed[:32], curve=SECP256k1)
         self.address = hashlib.sha256(
             self.private_key.verifying_key.to_string()
         ).hexdigest()
-        self.username = input("write a username: ")
+        self.username = input("Username: ")
         self._save_to_file(phrase, self.username)
         return self
 
@@ -151,7 +156,10 @@ class Wallet:
             'message': hashed_msg
         }
         res = requests.post(f"{SERVER}/tx/new", json=tx)
-        print("Transaction status:", res.text)
+        os.system('clear')
+        print("Transaction status: ", res.text)
+        os.system('sleep 3')
+        os.system('clear')
 
     def balance(self):
         res = requests.get(f"{SERVER}/balance/{self.address}")
@@ -182,14 +190,14 @@ class Wallet:
             block_hash = hashlib.sha256(
                 json.dumps(block, sort_keys=True).encode()
             ).hexdigest()
-            
+
             transactions = []
             for tx in block.get('transactions', []):
                 sender = tx['sender'][:6] + '...' if tx['sender'] != '0' else '0...'
                 recipient = tx['recipient'][:6] + '...'
                 amount = f"{tx['amount']:.5f}"
                 transactions.append(f"   {sender} → {recipient}: {amount}")
-            
+
             formatted_block = (
                 f"🔗 Block #{block['index']}\n"
                 f"⏰ Time: {time.ctime(block['timestamp'])}\n"
@@ -202,43 +210,81 @@ class Wallet:
         return '\n'.join(formatted)
 
 def menu():
-    banner()
-    wallet = Wallet()
-    print("\n========== KendCoin Wallet ==========\n")
-    print("1. Create Wallet\n2. Load Wallet\n3. Recover Wallet\n4. Login with Private Key\n5. Exit")
-    choice = input("\nChoice: ")
+    while True:
+        wallet = Wallet()
+        os.system('clear')
+        banner()
+        print("\n========== KendCoin Wallet ==========\n")
+        print("Warning : This wallet can only be\naccessed using private key file and \n12 SEED PHRASES, make sure to \nnot share with anyone, and \nsave it properly.")
+        print("\n=====================================\n\n")
+        input("Click Enter to Continue.......")
+        os.system("clear")
+        banner()
+        print("\n========== KendCoin Wallet ==========\n")
+        print("[1] Create Wallet\n[2] Load Wallet\n[3] Recover Wallet\n[4] Exit")
+        print("\n=====================================")
+        choice = input("\nChoice: ")
 
-    if choice == '1':
-        wallet.generate()
-        os.system('clear')
-        banner()
-        print(f"\nLogged in as: {wallet.username}")
-        print(f"\nAddress: {wallet.address}")        
-    elif choice == '2':
-        os.system('clear')
-        banner()
-        print("\n========= KendCoin Wallet ========\n")
-        print("Available Wallet in this Device\n")
-        os.system('ls -1 *.dat')
-        path = input("\n\nSELECT WALLET: ")
-        wallet.load(path)
-        os.system('clear')        
-        
-    elif choice == '3':
-        banner()
-        phrase = input("\nEnter seed phrase: ")
-        wallet.recover_from_seed(phrase)
-        print(f"\nLogged in as: {wallet.username}")
-        print(f"\nAddress: {wallet.address}")
-        os.system('clear')
-    elif choice == '4':
-        pem = getpass("\nPaste private key PEM (start with -----BEGIN EC PRIVATE KEY-----): ")
-        wallet.load_from_private_key(pem)
-        print(f"\nLogged in as imported wallet")
-        print(f"\nAddress: {wallet.address}")
-        os.system('clear')
-    else:
-        return
+        if choice == '1':
+            os.system('clear')
+            banner()
+            print("\n========== KendCoin Wallet ==========\n")
+            try:
+                wallet.generate()
+                break
+            except Exception as e:
+                print(f"Error creating wallet: {e}")
+                input("Press Enter to continue...")
+                continue
+        elif choice == '2':
+            os.system('clear')
+            banner()
+            print("\n========= KendCoin Wallet ========\n")
+            print("Available Wallet in this Device\n")
+            os.system('ls -1 *.wallet')
+            print("\n==================================")
+            path = input("\n\nSELECT WALLET: ")
+            try:
+                wallet.load(path)
+                os.system('clear')
+                break
+            except Exception as e:
+                print(f"Failed to load wallet: {e}")
+                input("Press Enter to continue...")
+                continue
+        elif choice == '3':
+            os.system('clear')
+            banner()
+            print("\n========= KendCoin Wallet ========\n")
+            phrase = input("\nEnter SEED PHRASE: ")
+            try:
+                wallet.recover_from_seed(phrase)
+                print(f"\nLogged in as: {wallet.username}")
+                print(f"\nAddress: {wallet.address}")
+                os.system('clear')
+                break
+            except Exception as e:
+                print(f"Error recovering wallet: {e}")
+                input("Press Enter to continue...")
+                continue
+        elif choice == '9':
+            pem = getpass("\nPaste private key PEM (start with -----BEGIN EC PRIVATE KEY-----): ")
+            try:
+                wallet.load_from_private_key(pem)
+                print(f"\nLogged in as imported wallet")
+                print(f"\nAddress: {wallet.address}")
+                os.system('clear')
+                break
+            except Exception as e:
+                print(f"Error loading private key: {e}")
+                input("Press Enter to continue...")
+                continue
+        elif choice == '4':
+            return
+        else:
+            print("Invalid choice. Please try again.")
+            input("Press Enter to continue...")
+            continue
 
     while True:
         banner()
@@ -247,19 +293,18 @@ def menu():
         print(f"\nWallet Address: {wallet.address}\n")
         wallet.balance()
         print(f"==================================")
-        print("\n\n1. Send\n2. Balance\n3. Transaction History\n4. View Blockchain\n5. View Wallet Info\n6. Exit")
+        print("\n\n[1] Send\n[2] Transaction History\n[3] View Blockchain\n[4] View Private Key\n[5] View Seed Phrases\n[6] Exit")
+        print(f"\n==================================")
         cmd = input("\nCommand: ")
         if cmd == '1':
-            recipient = input("\nRecipient address: ")
+            recipient = input("\nReceiver address: ")
             amount = float(input("\nAmount: "))
             message = input("\nEnter to confirm..")
+            print("\nProcessing Payment....\n")
             wallet.send(recipient, amount, message)
         elif cmd == '2':
-            wallet.balance()
-        elif cmd == '3':
             history = wallet.get_transaction_history()
             os.system('clear')
-            banner()
             print("\n--- Transaction History ---")
             for entry in history:
                 tx = entry['transaction']
@@ -268,7 +313,9 @@ def menu():
                 print(f"To: {tx['recipient']}")
                 print(f"Amount: {tx['amount']:.5f}")
                 print(f"Message Hash: {tx['message']}")
-        elif cmd == '4':
+            input("\nPress Enter to return to the menu...")
+            os.system('clear')
+        elif cmd == '3':
             res = requests.get(f"{SERVER}/chain")
             if res.status_code == 200:
                 chain = res.json().get('chain', [])
@@ -277,16 +324,28 @@ def menu():
                 print("\n" + wallet.format_blockchain(chain))
             else:
                 print("\nFailed to fetch blockchain")
-        elif cmd == '5':
-            banner()
+            input("\nPress Enter to return to the menu...")
+            os.system('clear')
+        elif cmd == '4':
+            os.system('clear')
             print(f"###############################")
-            print(f"\nUsername: {wallet.username}")
-            print(f"\nAddress: {wallet.address}")
             print(f"\nPrivate Key:\n{wallet.private_key.to_pem().decode()}")
             print(f"###############################\n")
-
+            input("Press Enter to return to the menu...")
+            os.system('clear')
+        elif cmd == '5':
+            os.system('clear')
+            print(f"\n###############################")
+            print(f"\nSeed Phrase:\n{wallet.seed_phrase}")
+            print(f"\n###############################\n")
+            input("Press Enter to return to the menu...")
+            os.system('clear')
         elif cmd == '6':
             break
+        else:
+            print("Invalid command. Please try again.")
+            input("Press Enter to continue...")
+            os.system('clear')
 
 if __name__ == '__main__':
     menu()
